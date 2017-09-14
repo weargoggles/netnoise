@@ -81,16 +81,17 @@ fn main() {
     for line in io::BufReader::new(io::stdin()).lines() {
         let now = time::precise_time_ns();
         let dt = (now - then);
-        bufuntil = bufuntil - dt; //
         then = now;
-        if bufuntil > now + (1000000000) {
+        if bufuntil < now {
+            bufuntil = now;
+        }
+        bufuntil = bufuntil - dt; //
+        if bufuntil > now + (100000) {
             continue;
         } 
-        println!("{:?}, {:?}, {:?}", now, dt, bufuntil);
         let real_line = line.unwrap();
         let parts: Vec<&str> = real_line.split(' ').collect();
         let pkt_length = parts[parts.len()-1];
-        println!("pkl {:?}", pkt_length);
         let pkt_size = match f32::from_str(pkt_length) {
             Ok(p) => {
                 if p == 0.0 {
@@ -102,10 +103,8 @@ fn main() {
                 continue;
             }
         };
-        println!("log pkl {:?}", pkt_size);
         let octets: Vec<&str> = parts[2].split('.').collect();
         let first = usize::from_str_radix(octets[0], 10).unwrap() / 16;
-        println!("{:?}", first);
         let note = c_major_scale[first + 32].clone();
         let note_length_bytes = (48000 / 128) * (pkt_size as i32);
         let note_length_ns = ((note_length_bytes as u64) / 48000) * 1000000000; 
