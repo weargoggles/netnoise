@@ -4,6 +4,8 @@ extern crate sdl2;
 
 use sdl2::audio::AudioSpecDesired;
 use std::iter::repeat;
+use std::io;
+use std::io::{BufRead, Read};
 use std::time::Duration;
 
 fn gen_wave(bytes_to_write: i32, frequency: f32) -> Vec<i16> {
@@ -42,10 +44,10 @@ fn main() {
     let major_scale: Vec<i32> = vec![2, 2, 1, 2, 2, 2, 1];
     let major_scale_iter = major_scale.iter().cycle();
     let middle_c: i32 = -9;
-    let c3 = middle_c - 12;
+    let c0 = middle_c - 48;
 
-    let mut c_major_scale = vec![c3];
-    c_major_scale = major_scale_iter.take(24).fold(
+    let mut c_major_scale = vec![c0];
+    c_major_scale = major_scale_iter.take(63).fold(
         c_major_scale,
         |mut seq: Vec<i32>, offset: &i32| {
             let last = seq.pop().unwrap();
@@ -68,16 +70,25 @@ fn main() {
 
     let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
 
+    println!("before resume");
+    device.resume();
+    println!("after resume");
     let target_bytes = 48000 * 4;
-    for note in c_major_scale.iter() {
-        let note = note.clone();
-        let wave = gen_wave(48000 / 16, note_freq(note));
+    for line in io::BufReader::new(io::stdin()).lines() {
+        let real_line = line.unwrap();
+        println!("{:?}", real_line);
+        let parts: Vec<&str> = real_line.split(' ').collect();
+        println!("{:?}", parts);
+        let octets: Vec<&str> = parts[2].split('.').collect();
+        let first = usize::from_str_radix(octets[0], 10).unwrap() / 8;
+        println!("{:?}", first);
+        let note = c_major_scale[first].clone();
+        let wave = gen_wave(48000 / 32, note_freq(note));
         device.queue(&wave);
     }
     // let wave = gen_wave(target_bytes, 440);
     // device.queue(&wave);
     // Start playback 
-    device.resume();
 
     // Play for 2 seconds 
     std::thread::sleep(Duration::from_millis(2000));
