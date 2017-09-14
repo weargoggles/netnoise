@@ -1,11 +1,13 @@
 #[macro_use]
 extern crate lazy_static;
 extern crate sdl2;
+extern crate time;
 
 use sdl2::audio::AudioSpecDesired;
 use std::iter::repeat;
 use std::io;
 use std::io::{BufRead, Read};
+use std::str::FromStr;
 use std::time::Duration;
 
 fn gen_wave(bytes_to_write: i32, frequency: f32) -> Vec<i16> {
@@ -74,16 +76,41 @@ fn main() {
     device.resume();
     println!("after resume");
     let target_bytes = 48000 * 4;
+    let mut then = time::precise_time_ns();
+    let mut bufuntil = time::precise_time_ns();
     for line in io::BufReader::new(io::stdin()).lines() {
+        let now = time::precise_time_ns();
+        let dt = (now - then);
+        bufuntil = bufuntil - dt; //
+        then = now;
+        if bufuntil > now + (1000000000) {
+            continue;
+        } 
+        println!("{:?}, {:?}, {:?}", now, dt, bufuntil);
         let real_line = line.unwrap();
-        println!("{:?}", real_line);
         let parts: Vec<&str> = real_line.split(' ').collect();
-        println!("{:?}", parts);
+        let pkt_length = parts[parts.len()-1];
+        println!("pkl {:?}", pkt_length);
+        let pkt_size = match f32::from_str(pkt_length) {
+            Ok(p) => {
+                if p == 0.0 {
+                    continue;
+                }
+                p.ln()
+            },
+            Err(e) => {
+                continue;
+            }
+        };
+        println!("log pkl {:?}", pkt_size);
         let octets: Vec<&str> = parts[2].split('.').collect();
-        let first = usize::from_str_radix(octets[0], 10).unwrap() / 8;
+        let first = usize::from_str_radix(octets[0], 10).unwrap() / 16;
         println!("{:?}", first);
-        let note = c_major_scale[first].clone();
-        let wave = gen_wave(48000 / 32, note_freq(note));
+        let note = c_major_scale[first + 32].clone();
+        let note_length_bytes = (48000 / 128) * (pkt_size as i32);
+        let note_length_ns = ((note_length_bytes as u64) / 48000) * 1000000000; 
+        let wave = gen_wave(note_length_bytes, note_freq(note));
+        bufuntil += note_length_ns;
         device.queue(&wave);
     }
     // let wave = gen_wave(target_bytes, 440);

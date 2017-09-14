@@ -6,3 +6,4 @@ authors = ["Pete Wildsmith <pete@dabapps.com>"]
 [dependencies]
 sdl2 = "0.30.0"
 lazy_static = "0.2.8"
+time = "0.1"
