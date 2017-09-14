@@ -10,6 +10,19 @@ use std::io::{BufRead, Read};
 use std::str::FromStr;
 use std::time::Duration;
 
+fn adsr(t: f32, total: f32) -> f32 {
+    // 1.0
+    if t < total / 4.0 {
+        t / (total / 4.0)
+    } else if t < 3.0 * total / 4.0 {
+        1.0
+    } else if t > (total * 9.0 / 10.0) {
+        - (t / total)
+    } else {
+        0.0
+    }
+}
+
 fn gen_wave(bytes_to_write: i32, frequency: f32) -> Vec<i16> {
     // Generate a square wave
     let tone_volume = 1000i16;
@@ -17,33 +30,30 @@ fn gen_wave(bytes_to_write: i32, frequency: f32) -> Vec<i16> {
     let sample_count = bytes_to_write;
     let mut result = Vec::new();
   
-    for x in 0..sample_count {
+    for t in 0..sample_count {
         result.push(
-                if (x / period as i32) % 2 == 0 {
-                tone_volume
-                }
-                else {
-                -tone_volume
-                }
+                (8000.0 * adsr(t as f32, sample_count as f32) * (
+                    ((t as f32) / 48000.0) * (2.0 * (std::f32::consts::PI as f32)) * frequency
+                ).sin()) as i16
         );
     }
     result
 }
 
-static f_zero: f32 = 440.0;
+static F_ZERO: f32 = 440.0;
 
 fn note_freq(half_tone_offset: i32) -> f32 {
     lazy_static! {
         static ref A: f32 = (2.0 as f32).powf(1.0/12.0);
     }
-    f_zero * A.powf(half_tone_offset as f32)
+    F_ZERO * A.powf(half_tone_offset as f32)
 }
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
 
-    let major_scale: Vec<i32> = vec![2, 2, 1, 2, 2, 2, 1];
+    let major_scale: Vec<i32> = vec![2, 2, 1, 2, 1, 2, 1];
     let major_scale_iter = major_scale.iter().cycle();
     let middle_c: i32 = -9;
     let c0 = middle_c - 48;
@@ -71,11 +81,11 @@ fn main() {
         };
 
     let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
+    // let temp_wave = gen_wave(48000, 440.0);
+    // device.queue(&temp_wave);
 
-    println!("before resume");
+
     device.resume();
-    println!("after resume");
-    let target_bytes = 48000 * 4;
     let mut then = time::precise_time_ns();
     let mut bufuntil = time::precise_time_ns();
     for line in io::BufReader::new(io::stdin()).lines() {
@@ -84,11 +94,9 @@ fn main() {
         then = now;
         if bufuntil < now {
             bufuntil = now;
+        } else {
+            bufuntil = bufuntil - dt; //
         }
-        bufuntil = bufuntil - dt; //
-        if bufuntil > now + (100000) {
-            continue;
-        } 
         let real_line = line.unwrap();
         let parts: Vec<&str> = real_line.split(' ').collect();
         let pkt_length = parts[parts.len()-1];
@@ -105,12 +113,17 @@ fn main() {
         };
         let octets: Vec<&str> = parts[2].split('.').collect();
         let first = usize::from_str_radix(octets[0], 10).unwrap() / 16;
-        let note = c_major_scale[first + 32].clone();
-        let note_length_bytes = (48000 / 128) * (pkt_size as i32);
+        let note = c_major_scale[first + 24].clone();
+        let note_length_bytes = (48000 / 32) * (pkt_size as i32);
         let note_length_ns = ((note_length_bytes as u64) / 48000) * 1000000000; 
-        let wave = gen_wave(note_length_bytes, note_freq(note));
-        bufuntil += note_length_ns;
-        device.queue(&wave);
+        if note_length_ns > 100000000 {
+            continue;
+        }
+        if (bufuntil - now < 1000000000) {
+            let wave = gen_wave(note_length_bytes, note_freq(note));
+            bufuntil += note_length_ns;
+            device.queue(&wave);
+        }
     }
     // let wave = gen_wave(target_bytes, 440);
     // device.queue(&wave);
