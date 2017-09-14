@@ -3,83 +3,77 @@ extern crate lazy_static;
 extern crate sdl2;
 extern crate time;
 
-use sdl2::audio::AudioSpecDesired;
-use std::iter::repeat;
+use sdl2::audio::{AudioSpecDesired, AudioCallback};
 use std::io;
-use std::io::{BufRead, Read};
+use std::io::{BufRead};
 use std::str::FromStr;
 use std::time::Duration;
 
-const ATTACK: f32 = 0.05;
-const DECAY: f32 = 0.0;
-const SUSTAIN: f32 = 1.0;
-const RELEASE: f32 = 0.75;
+mod synth;
+mod music;
 
-fn adsr(t: f32, total: f32) -> f32 {
-    // 1.0
-    if t < total * ATTACK {
-        t / (total * ATTACK)
-    } else if t < total * (1.0 - RELEASE) {
-        1.0
-    } else {
-        (total - t) / (total * RELEASE)
-    }
-}
-
-fn gen_wave(bytes_to_write: i32, frequency: f32) -> Vec<i16> {
-    // Generate a square wave
-    let sample_count = bytes_to_write;
-    let mut result = Vec::new();
-  
-    for t in 0..sample_count {
-        result.push(
-                (8000.0 * adsr(t as f32, sample_count as f32) * (
-                    ((t as f32) / SAMPLE_RATE as f32) * (2.0 * (std::f32::consts::PI as f32)) * frequency
-                ).sin()) as i16
-        );
-    }
-    result
-}
-
-static F_ZERO: f32 = 440.0;
 static SAMPLE_RATE: i32 = 44100;
 
 
-fn note_freq(half_tone_offset: i32) -> f32 {
-    lazy_static! {
-        static ref A: f32 = (2.0 as f32).powf(1.0/12.0);
+struct Note {
+    struck: u64, // ns
+    frequency: f32,
+    duration: u64, // ns
+}
+
+struct PolyPhone {
+    notes: Vec<Note>,
+    clock: u64, // ns
+}
+
+impl PolyPhone {
+    fn new() -> PolyPhone {
+        PolyPhone {
+            clock: 0,
+            notes: Vec::new()
+        }
     }
-    F_ZERO * A.powf(half_tone_offset as f32)
+
+    fn play(&mut self, frequency: f32, duration: u64) {
+        self.notes.push(Note {
+            struck: self.clock,
+            frequency,
+            duration,
+        });
+    }
+}
+
+impl AudioCallback for PolyPhone {
+
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        for x in out.iter_mut() {
+            self.clock += 1000000000 / SAMPLE_RATE as u64;
+            *x = self.notes.iter().map(
+                |note| {
+                    let envelope = synth::adsr((self.clock - note.struck) as f32, note.duration as f32);
+                    let wave = (std::f32::consts::PI * 2.0 * self.clock as f32 / 1000000000.0).sin();
+                    envelope * wave * 8000.0
+                }
+            ).fold(0.0, |a, b| a + b);
+        }
+    }
 }
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
 
-    let major_scale: Vec<i32> = vec![2, 2, 1, 2, 1, 2, 1];
-    let major_scale_iter = major_scale.iter().cycle();
-    let middle_c: i32 = -9;
-    let c0 = middle_c - 48;
-
-    let mut c_major_scale = vec![c0];
-    c_major_scale = major_scale_iter.take(63).fold(
-        c_major_scale,
-        |mut seq: Vec<i32>, offset: &i32| {
-            let last = seq.pop().unwrap();
-            let next = last + offset;
-            seq.push(last);
-            seq.push(next);
-            seq
-        }
-    );
-    println!("{:?}", c_major_scale);
+    let scale = music::scale(music::IONIAN.to_vec(), -9 - 48);
+    println!("{:?}", scale);
 
 
     let desired_spec = AudioSpecDesired {
         freq: Some(SAMPLE_RATE),
         channels: Some(1),
         // mono  -
-        samples: Some(32768),
+        samples: Some(4096),
         // default sample size 
         };
 
@@ -109,7 +103,7 @@ fn main() {
                 if p == 0.0 {
                     continue;
                 }
-                p.log(2.0)
+                p.log(4.0)
             },
             Err(e) => {
                 continue;
@@ -122,15 +116,15 @@ fn main() {
         //     usize::from_str_radix(octets[2], 10).unwrap() +
         //     usize::from_str_radix(octets[3], 10).unwrap()
         // ) / 64;
-        let first = usize::from_str_radix(octets[3], 10).unwrap() / 8;
-        let note = c_major_scale[first + 24].clone();
-        let note_length_bytes = (SAMPLE_RATE / (64 / pkt_size.floor() as i32)) as i32;
-        let note_length_ns = ((note_length_bytes as u64) / 44100) * 1000000000; 
+        let first = usize::from_str_radix(octets[3], 10).unwrap() / 16;
+        let note = scale[first + 16].clone();
+        let samples = (SAMPLE_RATE / (32 / pkt_size.floor() as i32)) as i32;
+        let note_length_ns = ((samples as u64) / 44100) * 1000000000; 
         if note_length_ns > 50000000 {
             continue;
         }
-        if bufuntil - now < 2000000000 {
-            let wave = gen_wave(note_length_bytes, note_freq(note));
+        if bufuntil - now < 2 * 1000000000 {
+            let wave = synth::gen_wave(samples, note, SAMPLE_RATE);
             bufuntil += note_length_ns;
             device.queue(&wave);
         }
