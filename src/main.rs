@@ -7,7 +7,7 @@ use std::time::Duration;
 fn gen_wave(bytes_to_write: i32, frequency: i32) -> Vec<i16> {
     // Generate a square wave
     let tone_volume = 1000i16;
-    let period = frequency;
+    let period = 48000 / frequency;
     let sample_count = bytes_to_write;
     let mut result = Vec::new();
   
@@ -39,7 +39,7 @@ fn main() {
     let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
 
     let target_bytes = 48000 * 4;
-    let wave = gen_wave(target_bytes);
+    let wave = gen_wave(target_bytes, 440);
     device.queue(&wave);
     // Start playback 
     device.resume();
