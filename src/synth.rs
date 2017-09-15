@@ -3,7 +3,7 @@ use std;
 const ATTACK: f32 = 0.05;
 const DECAY: f32 = 0.0;
 const SUSTAIN: f32 = 1.0;
-const RELEASE: f32 = 0.5;
+const RELEASE: f32 = 0.9;
 
 pub fn adsr(t: f32, total: f32) -> f32 {
     // 1.0
