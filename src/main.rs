@@ -13,7 +13,8 @@ use std::sync::mpsc::{channel, Receiver};
 mod synth;
 mod music;
 
-static SAMPLE_RATE: i32 = 44100;
+const SAMPLE_RATE: i32 = 44100;
+const QUANTIZE_NS: u64 = (1000000000 / (SAMPLE_RATE as u64));
 
 #[derive(Debug, PartialEq, Eq)]
 struct Note {
@@ -25,11 +26,11 @@ struct Note {
 struct PolyPhone {
     notes: Vec<Note>,
     clock: u64, // ns
-    rx: Receiver<(f32, u64)>,
+    rx: Receiver<(f32, u64, u64)>,
 }
 
 impl PolyPhone {
-    fn new(rx: Receiver<(f32, u64)>) -> PolyPhone {
+    fn new(rx: Receiver<(f32, u64, u64)>) -> PolyPhone {
         PolyPhone {
             clock: 0,
             notes: Vec::new(),
@@ -45,13 +46,13 @@ impl AudioCallback for PolyPhone {
     fn callback(&mut self, out: &mut [f32]) {
         for item in self.rx.try_iter() {
             match item {
-                (frequency, duration) => {
+                (frequency, duration, struck) => {
                     let n = Note {
-                        struck: self.clock,
+                        struck,
                         frequency: (frequency * 1000000000.0) as u64,
                         duration,
                     };
-                    if self.notes.len() < 8 {
+                    if self.notes.len() < 24 {
                         self.notes.push(n);
                     }
                 }
@@ -62,9 +63,9 @@ impl AudioCallback for PolyPhone {
             *x = self.notes.iter()
             .map(
                 |note| {
-                    let envelope = synth::adsr((self.clock - note.struck) as f32, note.duration as f32);
+                    let envelope = synth::adsr((self.clock as i64 - note.struck as i64) as f32, note.duration as f32);
                     let t = (self.clock as f32) / 1000000000.0; // seconds
-                    let f = (note.frequency / 1000000000) as f32; // Hz
+                    let f = (note.frequency as f32) / 1000000000.0; // Hz
                     let wave = (f * std::f32::consts::PI * 2.0 * t).sin();
                     envelope * wave * 1.0
                 }
@@ -88,7 +89,7 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
 
-    let scale = music::scale(music::IONIAN.to_vec(), -9 - 48);
+    let scale = music::scale(music::AEOLIAN.to_vec(), -9 - 48);
     println!("{:?}", scale);
 
 
@@ -96,7 +97,7 @@ fn main() {
         freq: Some(SAMPLE_RATE),
         channels: Some(1),
         // mono  -
-        samples: Some(256),
+        samples: Some(2048),
         // default sample size 
         };
 
@@ -110,8 +111,10 @@ fn main() {
 
 
     device.resume();
+    let start: u64 = time::precise_time_ns(); 
 
     for line in io::BufReader::new(io::stdin()).lines() {
+        let clock = time::precise_time_ns() - start;
         let real_line = line.unwrap();
         let parts: Vec<&str> = real_line.split(' ').collect();
         let pkt_length = parts[parts.len()-1];
@@ -120,7 +123,7 @@ fn main() {
                 if p == 0.0 {
                     continue;
                 }
-                p.log(4.0)
+                p.ln()
             },
             Err(e) => {
                 continue;
@@ -138,7 +141,11 @@ fn main() {
         if pkt_size.floor() as u64 == 0 {
             continue;
         }
-        tx.send((note, (pkt_size.floor() as u64) * 1000000000 / 4)).unwrap();
+        tx.send((
+            note,
+            (pkt_size.ceil() as u64) * 1000000000 / 8,
+            (1 + (clock / QUANTIZE_NS)) * QUANTIZE_NS
+        )).unwrap();
     }
     // let wave = gen_wave(target_bytes, 440);
     // device.queue(&wave);
